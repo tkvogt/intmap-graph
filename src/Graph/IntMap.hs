@@ -75,14 +75,14 @@ data Graph nl el = Graph {
   showEdge :: Map Word8 el
 } deriving Generic
 
--- | Convert a complex edge label to an attribute with (n<32) bits
+-- | Convert a complex edge label to an attribute with 8 bits
 --   How to do this depends on which edges have to be filtered fast
 class EdgeAttribute el where
     fastEdgeAttr :: el -> Word8 -- The key that is used for counting
     edgeFromAttr :: Map Word8 el -- 
     show_e :: Maybe el -> String
-    bases :: el ->  [Edge8] -- the list of all attributes, so that we can compute all children an all parents
-                             -- Only in the typeclass so that people do not forget to specify it
+    bases :: el ->  [Edge8] -- the list of all attributes, so that we can compute all children and all parents
+                            -- Only in the typeclass so that people do not forget to specify it
   --   main attr of the arbitraryKeygraph
   --   e.g. unicode leaves 10 bits of the 32 bits unused, that could be used for the
   --   direction of the edge, if its a right or left edge in a binary tree, etc.
@@ -245,18 +245,41 @@ mapNodeWithKey f g = Graph (outgoingNodes g)
 
 ----------------------------------------------------------------------------------------
 
-deleteNode :: EdgeAttribute el => el -> Node -> Graph nl el -> Graph nl el
+-- | delete node with its nodelabel and also all outgoing and incoming edges with their edgeLabels
+deleteNode :: (EdgeAttribute el, Show nl, Show el, Enum nl) => el -> Node -> Graph nl el -> Graph nl el
 deleteNode elabel n graph = graph { outgoingNodes = newOutGraph,
                                     incomingNodes = newInGraph,
-                                    nodeLabels = I.delete (fromIntegral n) (nodeLabels graph) }
-  where newOutGraph = foldr I.delete (outgoingNodes graph) nodeEdges
-        newInGraph = foldr I.delete (incomingNodes graph) nodeEdges
-        nodeEdges = map fromIntegral (map (+ n) bases32)
-        bases32 = map (\(Edge8 e) -> fromIntegral e) (bases elabel) :: [Node]
+                                    nodeLabels = I.delete (fromIntegral n) (nodeLabels graph),
+                                    edgeLabels = foldr Map.delete (edgeLabels graph) (map ord edgeLabelsToDelete) }
+  where newOutGraphOrigin = foldr I.delete (outgoingNodes graph) nodeEdges
+        newInGraphOrigin  = foldr I.delete (incomingNodes graph) nodeEdges
+        newOutGraph = foldr deleten newOutGraphOrigin (map fromIntegral adjNEs)
+        newInGraph  = foldr deleten newInGraphOrigin  (map fromIntegral adjNEs)
+        deleten ne g = I.update delEmpty ne (I.adjust (Set.delete n) ne g)
+        adjNEs | b         = concat $ map (\a -> map (\b -> buildWord32 a (fromIntegral b)) bs) adj
+               | otherwise = map fromIntegral $
+                             concat $ map (\a -> map (\b -> buildWord64 a (fromIntegral b)) bs) adj
+        edgeLabelsToDelete = zip (repeat n) adj
+        adj = adjacentNodes graph n elabel
+        ord (n0,n1) | n0 <= n1  = (n0,n1)
+                    | otherwise = (n1,n0)
+        nodeEdges | b         = map fromIntegral (map (buildWord32 n) bs)
+                  | otherwise = map fromIntegral (map (buildWord64 n) (map fromIntegral bs))
+        bs = map (\(Edge8 e) -> e) (bases elabel)
+        b = is32BitInt graph
+
 
 deleteNodes elabel graph nodes = foldr (deleteNode elabel) nodes graph
 
+
+delEmpty x | null x = Nothing
+           | otherwise = Just x
+
+
 -- | "deleteEdge (n0, n1) graph" deletes the edgelabel of (n0,n1) and the nodeEdge that points from n0 to n1
+--   If maybeIsBack is Just then a second directed edge from n1 to n0 is deleted
+--   isBack = True means an opposite directed edge that can be explored in both directions
+--   isBack = False means a undirected edge that also can be explored in both directions
 deleteEdge :: EdgeAttribute el => Maybe Bool -> Edge -> Graph nl el -> Graph nl el
 deleteEdge maybeIsBack (n0, n1) graph
     | isNothing elabel = graph
@@ -276,9 +299,8 @@ deleteEdge maybeIsBack (n0, n1) graph
         ne1 | is32BitInt graph = fromIntegral (buildWord32 n1 e8)
             | otherwise        = fromIntegral (buildWord64 n1 (fromIntegral e8))
         e8 = fastEdgeAttr (fromJust elabel)
-        delEmpty x | null x = Nothing
-                   | otherwise = Just x
 
+-- | 
 deleteEdges maybeIsBack graph edges = -- Debug.Trace.trace ("deleteEdges "++ show maybeIsBack) $
                                       foldr (deleteEdge maybeIsBack) edges graph
 
