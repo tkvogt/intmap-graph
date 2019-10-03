@@ -10,7 +10,7 @@ Portability :  POSIX
 
 -}
 module Graph.IntMap (
-    EdgeAttribute(..), Graph(..),
+    EdgeAttribute(..), Graph(..), ExtractNodeType(..),
     Edge, Edge8(..),
     -- * Construction
     empty, fromLists, fromMaps,
@@ -54,12 +54,13 @@ import Debug.Trace
 
 
 newtype Edge8 = Edge8 Word8
--- ^ Although both node and edge are Word32 we want to differentiate them
---   An edge is a combination of 32 bit (node+attr) and 32 bit edge
+-- ^ In Javascript there are only 32 bit integers.
+--   If we want to squeeze a node and an edge into this we use 24 bits for the node and 8 bits for the edge
 
 instance Show Edge8 where show (Edge8 e) = "Edge " ++ (showHex32 (fromIntegral e))
 
 type Node = Word32
+-- ^ Assuming that 24 bits (~16 million) is enough for Javascript UI graph code
 
 type Edge = (Node,Node)
 -- ^ A tuple of nodes
@@ -87,20 +88,23 @@ class EdgeAttribute el where
   --   e.g. unicode leaves 10 bits of the 32 bits unused, that could be used for the
   --   direction of the edge, if its a right or left edge in a binary tree, etc.
 
+-- ^ if a node label is complicated, specify a short string to understand its type
+class ExtractNodeType nl where
+    extractNodeType :: nl -> String
 
 instance (EdgeAttribute el, Eq el, Eq nl) => Eq (Graph nl el)
   where (Graph o0 i0 n0 e0 b0 _) == (Graph o1 i1 n1 e1 b1 _) = b0 == b1 && o0 == o1 && i0 == i1 && n0 == n1 && e0 == e1
 
 
-instance (EdgeAttribute el, Show nl, Show el, Enum nl) =>
+instance (EdgeAttribute el, Show nl, ExtractNodeType nl, Show el, Enum nl) =>
          Show (Graph nl el) where
   show (Graph outgoingNodes incomingNodes nlGraph elGraph b showEdge) =
          (if b then "32bit graph\n" else "64 bit graph\n") ++
          "\noutgoing\ndigraph graphviz {\n" ++
-         concat (zipWith3 line nodeOrigins0 edges0 nodeDests0) ++
+         concat (zipWith3 lines nodeOrigins0 edges0 nodeDests0) ++
          "}\n" ++
          "\nincoming\ndigraph graphviz {\n"++
-         concat (zipWith3 line nodeOrigins1 edges1 nodeDests1) ++
+         concat (zipWith3 lines nodeOrigins1 edges1 nodeDests1) ++
          "}\n\n nodes\n" ++ show nlGraph ++ "\n\n edges\n" ++ show elGraph
     where
       nodeOrigins0 = map (if b then extractFirstWord24 . fromIntegral
@@ -119,17 +123,24 @@ instance (EdgeAttribute el, Show nl, Show el, Enum nl) =>
                          (I.keys incomingNodes)
       nodeDests1 = map Set.toList (I.elems incomingNodes)
 
-      line or e dest = show or ++" -> "++ show dest ++" [ label = \"" ++
-                       show_e (Map.lookup e showEdge) ++ "\" ];\n"
+      lines or e dests = concat (map (line . f) dests) where f d = (or,e,d)
+      line (or, e, dest) = extr or ++ show or ++ " -> "++ extr dest ++ show dest ++" [ label = \"" ++
+                           show_e (Map.lookup e showEdge) ++ "\" ];\n"
+      extr n = maybe "" extractNodeType (I.lookup (fromIntegral n) nlGraph)
 
 ------------------------------------------------------------------------------------------
 
--- | Generate two empty intmaps and two empty intmaps for complex node and edge
---   labels. The purpose of the range list is to give a special interpretation of edges
---   depending on the node type.
-empty :: EdgeAttribute el => Bool -> Graph nl el
-empty b = Graph I.empty I.empty I.empty Map.empty b edgeFromAttr
+-- | Generate an empty graph with 32 bit node-edges (24 bit for the node) that can be 
+--   used with code that ghcjs compiled to javascript
+empty :: EdgeAttribute el => Graph nl el
+empty = Graph I.empty I.empty I.empty Map.empty True edgeFromAttr
 
+-- | Generate an empty graph with 64 bit node-edges, 32 bit for the node
+empty64 :: EdgeAttribute el => Graph nl el
+empty64 = Graph I.empty I.empty I.empty Map.empty False edgeFromAttr
+
+-- | Construct a graph from a  list of nodes, undirected edges and directed edges,
+--   the bool has to be true it uses 32 bit integers, if false it uses 64 bit integers
 fromLists :: (EdgeAttribute el, Enum nl, Show nl, Show el) =>
              Bool -> [(Node, nl)] -> [((Node, Node), el)] -> [((Node, Node), el)] -> Graph nl el
 fromLists b ns es esDir = -- Debug.Trace.trace ("fromLists"++ show (es,nls,els,elsd,ms)) $
@@ -140,7 +151,8 @@ fromLists b ns es esDir = -- Debug.Trace.trace ("fromLists"++ show (es,nls,els,e
         elsd = Map.fromList esDir
         t (k,v) = (fromIntegral k, v)
 
--- | Make sure that elabels and elabelsDir have sorted node indexes, eg (0,1,el) and not (1,0,el)
+
+-- | Construct a graph from a node map, undirected edges map and directed edges map, b = True means 32 bit integers
 fromMaps :: (EdgeAttribute el, Show nl, Show el, Enum nl) =>
             Bool -> IntMap nl -> Map (Node,Node) el -> Map (Node,Node) el -> Bool -> Graph nl el
 fromMaps b nlabels elabels elabelsDir dir = -- Debug.Trace.trace ("fromMaps " ++ show newGraph )$
@@ -159,11 +171,14 @@ fromMaps b nlabels elabels elabelsDir dir = -- Debug.Trace.trace ("fromMaps " ++
         ord (n0,n1) | n0 <= n1  = (n0,n1)
                     | otherwise = (n1,n0)
 
+
+-- | Insert node with node label
 insertNode :: EdgeAttribute el => Node -> nl -> Graph nl el -> Graph nl el
 insertNode n nl graph = -- Debug.Trace.trace "insertNode" $
                         graph { nodeLabels = I.insert (fromIntegral n) nl (nodeLabels graph) }
 
 
+-- | Insert nodes with their label
 insertNodes :: EdgeAttribute el => [(Node, nl)] -> Graph nl el -> Graph nl el
 insertNodes nodes graph = foldr f graph nodes
   where f (n, nl) g = insertNode n nl g
@@ -200,12 +215,14 @@ insertEdges maybeIsBack edges graph = foldr f graph edges
   where f (e, el) g = insertEdge maybeIsBack e el g
 
 
--- 
+-- | Inserting node-edges
 insertNodeEdges :: EdgeAttribute el => Bool -> [((Node,Node),[el])] -> IntMap (Set Node) -> IntMap (Set Node)
 insertNodeEdges b es graph = -- Debug.Trace.trace "insertNodeEdges" $
                              foldr (insertNodeEdge b) graph es
 
 
+-- | Inserting a node edge.
+--   Exploring a graph is faster if a node and edge is combined into an 32/64 bit integer that points to a node
 insertNodeEdge :: EdgeAttribute el => Bool -> ((Node,Node),[el]) -> IntMap (Set Node) -> IntMap (Set Node)
 insertNodeEdge b ((n0, n1), edgeLs) g = -- Debug.Trace.trace ("insertNodeEdge (dir, e)"++ show (dir, e)) $
                                         insertNodeEdgeAttr b e g
@@ -213,7 +230,7 @@ insertNodeEdge b ((n0, n1), edgeLs) g = -- Debug.Trace.trace ("insertNodeEdge (d
         overlay el = Edge8 (sum (map fastEdgeAttr el)) -- TODO handling several edges
 
 
--- | 
+-- | An 8 bit value is computed from the edge and combined with the emanating node
 insertNodeEdgeAttr :: Bool -> ((Node,Node),Edge8) -> IntMap (Set Node) -> IntMap (Set Node)
 insertNodeEdgeAttr b ((n0, n1), Edge8 attr) graph =
        -- Debug.Trace.trace ("insertNodeEdgeAttr(n0,n1,attr,imap)" ++ show (n0,n1,Edge8 attr, imap)) $
@@ -222,14 +239,18 @@ insertNodeEdgeAttr b ((n0, n1), Edge8 attr) graph =
                   | otherwise = fromIntegral (buildWord64 n0 (fromIntegral attr))
         imap = I.insertWith Set.union newValKey (Set.singleton n1) graph
 
+
+-- | Makes a union over all components of the graph
 union (Graph og0 ig0 nlg0 elg0 b0 s)
       (Graph og1 ig1 nlg1 elg1 b1 _)
         | b0 /= b1 = error "cannot combine 32 bit wiht 62 bit graph"
         | otherwise = -- Debug.Trace.trace ("\nunion\n" ++ show g) $
                       g
   where g = Graph (I.union og0 og1) (I.union ig0 ig1) (I.union nlg0 nlg1) (Map.union elg0 elg1) b0 s
+
 ----------------------------------------------------------------------------------------
 
+-- | Mapping a function over the node labels
 mapNode :: EdgeAttribute el => (nl0 -> nl1) -> Graph nl0 el -> Graph nl1 el
 mapNode f g = Graph (outgoingNodes g)
                     (incomingNodes g)
@@ -237,6 +258,7 @@ mapNode f g = Graph (outgoingNodes g)
                     (edgeLabels g) (is32BitInt g) (showEdge g)
 
 
+-- | Mapping a function over the node labels with node key
 mapNodeWithKey :: EdgeAttribute el => (I.Key -> nl0 -> nl1) -> Graph nl0 el -> Graph nl1 el
 mapNodeWithKey f g = Graph (outgoingNodes g)
                            (incomingNodes g)
@@ -245,7 +267,7 @@ mapNodeWithKey f g = Graph (outgoingNodes g)
 
 ----------------------------------------------------------------------------------------
 
--- | delete node with its nodelabel and also all outgoing and incoming edges with their edgeLabels
+-- | Delete node with its nodelabel and also all outgoing and incoming edges with their edgeLabels
 deleteNode :: (EdgeAttribute el, Show nl, Show el, Enum nl) => el -> Node -> Graph nl el -> Graph nl el
 deleteNode elabel n graph = graph { outgoingNodes = newOutGraph,
                                     incomingNodes = newInGraph,
@@ -269,6 +291,7 @@ deleteNode elabel n graph = graph { outgoingNodes = newOutGraph,
         b = is32BitInt graph
 
 
+-- | Delete nodes with their label
 deleteNodes elabel graph nodes = foldr (deleteNode elabel) nodes graph
 
 
@@ -298,21 +321,23 @@ deleteEdge maybeIsBack (n0, n1) graph
             | otherwise        = fromIntegral (buildWord64 n0 (fromIntegral e8))
         ne1 | is32BitInt graph = fromIntegral (buildWord32 n1 e8)
             | otherwise        = fromIntegral (buildWord64 n1 (fromIntegral e8))
-        e8 = fastEdgeAttr (fromJust elabel)
+        e8 = maybe 0 fastEdgeAttr elabel
 
--- | 
+
+-- | Delete a list of (Node,Node) edges from the graph
 deleteEdges maybeIsBack graph edges = -- Debug.Trace.trace ("deleteEdges "++ show maybeIsBack) $
                                       foldr (deleteEdge maybeIsBack) edges graph
 
 ----------------------------------------------------------------------------------------
 
--- | the nodelabel of the given node
+-- | The nodelabel of the given node
 lookupNode :: (Show nl, EdgeAttribute el) => Node -> Graph nl el -> Maybe nl
 lookupNode n g = -- Debug.Trace.trace ("lookupNode(n,lu)" ++ show (n,lu)) $
                  lu
   where lu = I.lookup (fromIntegral n) (nodeLabels g)
 
--- | the edgelabel of the given edge of type (Node, Node)
+
+-- | The edgelabel of the given edge of type (Node, Node)
 lookupEdge :: (EdgeAttribute el, Show el) => Edge -> Graph nl el -> Maybe el
 lookupEdge (n0, n1) g = -- Debug.Trace.trace ("lookupEdge(n0,n1,lu,edgeLabels g)"++ show (n0, n1, lu,edgeLabels g) ) $
                         lu
@@ -322,13 +347,17 @@ lookupEdge (n0, n1) g = -- Debug.Trace.trace ("lookupEdge(n0,n1,lu,edgeLabels g)
 -----------------------------------------------------------------------------------------
 -- Query
 
--- | Are the intmaps of the graph all empty?
+-- | Are the node-/edge-maps of the graph all empty?
 isNull (Graph ograph igraph nlgr elgr b _) = I.null ograph && I.null igraph && I.null nlgr && Map.null elgr
 
+-- | The word32 keys of the node labels
 nodes (Graph ograph igraph nlgr elgr b _) = I.keys nlgr
 
+-- | List of (Node, Node)
 edges (Graph ograph igraph nlgr elgr b _) = Map.keys elgr
 
+
+-- | The list of adjacent edges can be divided with 8 bit attributes and all edges with a certain attribute selected
 adjacentNodesByAttr :: EdgeAttribute el => Graph nl el -> Bool -> Node -> Edge8 -> VU.Vector Node
 adjacentNodesByAttr graph out node (Edge8 attr) = -- Debug.Trace.trace ("adjNByA(n,str,val)"++ show (node,Edge8 attr,val)) $
                                                   maybe VU.empty (VU.fromList . Set.toList) val
@@ -347,12 +376,14 @@ adjacentNodes graph node someEdge = -- Debug.Trace.trace "adjacentNodes" $
   where bs = bases someEdge
 
 
+-- | Following the outgoing edges
 children :: EdgeAttribute el => Graph nl el -> Node -> el -> VU.Vector Node
 children graph node someEdge = -- Debug.Trace.trace "children" $
     VU.concat (map (adjacentNodesByAttr graph True node) bs)
   where bs = bases someEdge
 
 
+-- | Following the incoming edges
 parents :: EdgeAttribute el => Graph nl el -> Node -> el -> VU.Vector Node
 parents graph node someEdge = -- Debug.Trace.trace "parents" $
     VU.concat (map (adjacentNodesByAttr graph False node) bs)
@@ -361,7 +392,7 @@ parents graph node someEdge = -- Debug.Trace.trace "parents" $
 -------------------------------------------------------------------------
 -- Bit Operations
 
--- | concatenate two Word32 to a Word (64 bit)
+-- | Concatenate two Word32 to a Word (64 bit)
 {-# INLINE buildWord64 #-}
 buildWord64 :: Word32 -> Word32 -> Word
 buildWord64 w0 w1
@@ -370,7 +401,8 @@ buildWord64 w0 w1
         pokeByteOff p 4 w1
         peek (castPtr p)
 
--- | extract the first 32 bit of a 64 bit word
+
+-- | Extract the first 32 bit of a 64 bit word
 {-# INLINE extractFirstWord32 #-}
 extractFirstWord32 :: Word -> Word32
 extractFirstWord32 w
@@ -378,7 +410,8 @@ extractFirstWord32 w
         pokeByteOff p 0 w
         peek (castPtr p)
 
--- | extract the second 32 bit of a 64 bit word
+
+-- | Extract the second 32 bit of a 64 bit word
 {-# INLINE extractSecondWord32 #-}
 extractSecondWord32 :: Word -> Word32
 extractSecondWord32 w
@@ -389,7 +422,7 @@ extractSecondWord32 w
 --------------------------------------------------
 -- Javascript does not support 64 bit Ints, we have to use 32 bit
 
--- | nodes can use 24 bits, edges 8 bits
+-- | Nodes can use 24 bits, edges 8 bits
 buildWord32 :: Word32 -> Word8 -> Word32
 buildWord32 w0 w1
     = unsafePerformIO . allocaBytes 4 $ \p -> do
@@ -397,12 +430,14 @@ buildWord32 w0 w1
         pokeByteOff p 3 w1
         peek (castPtr p)
 
--- | extract the first 24 bit of a 32 bit word
+
+-- | Extract the first 24 bit of a 32 bit word
 {-# INLINE extractFirstWord24 #-}
 extractFirstWord24 :: Word32 -> Word32
 extractFirstWord24 w = w .&. 0xFFFFFF
 
--- | extract the last 8 bit of a 32 bit word
+
+-- | Extract the last 8 bit of a 32 bit word
 {-# INLINE extractSecondWord8 #-}
 extractSecondWord8 :: Word32 -> Word8
 extractSecondWord8 w
@@ -413,7 +448,7 @@ extractSecondWord8 w
 ------------------------------------------------------------------
 -- Debugging
 
--- | display a 64 bit word so that we can see the bits better
+-- | Display a 64 bit word so that we can see the bits better
 showHex :: Word -> String
 showHex n = showIt 16 n ""
    where
@@ -423,7 +458,8 @@ showHex n = showIt 16 n ""
                        (y, z) -> let c = intToDigit (fromIntegral z)
                                  in c `seq` showIt (i-1) y (c:r)
 
--- | display a 32 bit word so that we can see the bits better
+
+-- | Display a 32 bit word so that we can see the bits better
 showHex32 :: Word32 -> String
 showHex32 n = showIt 8 n ""
    where
