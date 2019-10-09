@@ -315,7 +315,8 @@ deleteEdge maybeIsBack (n0, n1) graph
         newOutGraph = ((I.update delEmpty ne0) . (I.update delEmpty ne1) .
                        (I.adjust (Set.delete n0) ne1) . (I.adjust (Set.delete n1) ne0)) (outgoingNodes graph)
 
-        newInGraph = ((I.update delEmpty ne0) . (I.adjust (Set.delete n1) ne0)) (incomingNodes graph)
+        newInGraph = ((I.update delEmpty ne0) . (I.update delEmpty ne1) .
+                       (I.adjust (Set.delete n0) ne1) . (I.adjust (Set.delete n1) ne0)) (incomingNodes graph)
 
         ne0 | is32BitInt graph = fromIntegral (buildWord32 n0 e8)
             | otherwise        = fromIntegral (buildWord64 n0 (fromIntegral e8))
