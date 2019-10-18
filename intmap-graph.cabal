@@ -8,7 +8,7 @@ license-file:        LICENSE
 author:              Tillmann Vogt
 maintainer:          tillk.vogt@gmail.com
 copyright:           2019 Tillmann Vogt
-category:            Web
+category:            graph
 build-type:          Simple
 extra-source-files:  README.md
 cabal-version:       >=1.10
@@ -16,7 +16,7 @@ cabal-version:       >=1.10
 library
   hs-source-dirs:      src
   exposed-modules:     Graph.IntMap
-  build-depends:       base
+  build-depends:       base == 4.*
                      , containers
                      , text
                      , vector

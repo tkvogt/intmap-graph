@@ -88,7 +88,7 @@ class EdgeAttribute el where
   --   e.g. unicode leaves 10 bits of the 32 bits unused, that could be used for the
   --   direction of the edge, if its a right or left edge in a binary tree, etc.
 
--- ^ if a node label is complicated, specify a short string to understand its type
+-- | if a node label is complicated, specify a short string to understand its type
 class ExtractNodeType nl where
     extractNodeType :: nl -> String
 
