@@ -5,8 +5,11 @@ Copyright   :  (C) 2019 Tillmann Vogt
 
 License     :  BSD-style (see the file LICENSE)
 Maintainer  :  Tillmann Vogt <tillk.vogt@gmail.com>
-Stability   :  provisional
-Portability :  POSIX
+Stability   :  stable
+Portability :  GHC
+
+The general idea of this library is that edges can put into classes. 
+As it is faster to lookup a 32/64-bit integer in an intmap than a tuple of integers in a Data.Map-map, we construct a graph by putting a node (24 bit) and its class (8 bit) of adjacent nodes into a 32 bit integer. We need to restrict it to 32 bit, because Javascript (and therefore GHCJS) only has 32 bit integers. If you want to use this library outside of a browser, use 64 bit and set the bool arg of some functions to False. Then there are 32 bits for the node and 32 bits for the edge class.
 
 -}
 module Graph.IntMap (
@@ -105,7 +108,8 @@ instance (EdgeAttribute el, Show nl, ExtractNodeType nl, Show el, Enum nl) =>
          "}\n" ++
          "\nincoming\ndigraph graphviz {\n"++
          concat (zipWith3 lines nodeOrigins1 edges1 nodeDests1) ++
-         "}\n\n nodes\n" ++ show nlGraph ++ "\n\n edges\n" ++ show elGraph
+         "}\n\n nodes\n" ++ concat (map ((++"\n"). show) (I.toList nlGraph)) ++
+         "\n\n edges\n" ++ concat (map ((++"\n"). show) (Map.toList  elGraph))
     where
       nodeOrigins0 = map (if b then extractFirstWord24 . fromIntegral
                                else extractFirstWord32 . fromIntegral)
