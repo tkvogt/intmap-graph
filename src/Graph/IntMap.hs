@@ -17,7 +17,7 @@ module Graph.IntMap (
     Edge, Edge8(..),
     -- * Construction
     empty, fromLists, fromMaps,
-    insertNode, insertNodes,
+    insertNode, insertNodes, adjustNode,
     insertEdge, insertEdges,
     union,
     -- * Traversal
@@ -187,6 +187,11 @@ insertNodes :: EdgeAttribute el => [(Node, nl)] -> Graph nl el -> Graph nl el
 insertNodes nodes graph = foldr f graph nodes
   where f (n, nl) g = insertNode n nl g
 
+
+-- | Adjust a node label of a specific node. When the node is not a member of the graph, the original graph is returned.
+adjustNode :: EdgeAttribute el => (nl -> nl) -> Node -> Graph nl el -> Graph nl el
+adjustNode f n graph = -- Debug.Trace.trace "insertNode" $
+                       graph { nodeLabels = I.adjust f (fromIntegral n) (nodeLabels graph) }
 
 -- | Inserting an edge
 --   If maybeIsBack is Nothing only one directed is edge from n0 to n1 is inserted
