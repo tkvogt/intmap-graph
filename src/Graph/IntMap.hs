@@ -128,9 +128,10 @@ instance (EdgeAttribute el, Show nl, ExtractNodeType nl, Show el, Enum nl) =>
       nodeDests1 = map Set.toList (I.elems incomingNodes)
 
       lines or e dests = concat (map (line . f) dests) where f d = (or,e,d)
-      line (or, e, dest) = extr or ++ show or ++ " -> "++ extr dest ++ show dest ++" [ label = \"" ++
+      line (or, e, dest) = extr nlGraph or ++ show or ++ " -> "++ extr nlGraph dest ++ show dest ++" [ label = \"" ++
                            show_e (Map.lookup e showEdge) ++ "\" ];\n"
-      extr n = maybe "" extractNodeType (I.lookup (fromIntegral n) nlGraph)
+
+extr g n = maybe "" extractNodeType (I.lookup (fromIntegral n) g)
 
 ------------------------------------------------------------------------------------------
 
@@ -192,6 +193,13 @@ insertNodes nodes graph = foldr f graph nodes
 adjustNode :: EdgeAttribute el => (nl -> nl) -> Node -> Graph nl el -> Graph nl el
 adjustNode f n graph = -- Debug.Trace.trace "insertNode" $
                        graph { nodeLabels = I.adjust f (fromIntegral n) (nodeLabels graph) }
+
+
+-- | Adjust an edge label of a specific edge. When the edge is not a member of the graph, the original graph is returned.
+adjustEdge :: EdgeAttribute el => (el -> el) -> Edge -> Graph nl el -> Graph nl el
+adjustEdge f (n0,n1) graph = -- Debug.Trace.trace "insertNode" $
+                             graph { edgeLabels = Map.adjust f (fromIntegral n0, fromIntegral n1) (edgeLabels graph) }
+
 
 -- | Inserting an edge
 --   If maybeIsBack is Nothing only one directed is edge from n0 to n1 is inserted
